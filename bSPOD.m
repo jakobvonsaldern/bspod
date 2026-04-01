@@ -97,7 +97,7 @@ Nwin = floor((Nt - Nf)/HOP) + 1;
 % -------------------------- preallocation ----------------------------------
 GAINS = zeros(Nwin, Nmodes);
 MODES = zeros(Nwin, Nmodes, Ndof);
-FREQS = zeros(Nwin, Nmodes, numel(ell) + 1);
+FREQS = zeros(Nwin, Nmodes, numel(ell));
 
 if nargout >= 4
     EXPANSION = zeros(Nwin, Nmodes, Nmodes);
