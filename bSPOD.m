@@ -20,8 +20,10 @@ function [GAINS, MODES, FREQS, EXPANSION] = bSPOD(data, Nf, varargin)
 %   'ovlp'    : integer, number of overlapping Fourier bins between bands (default 0)
 %   'window'  : 0/1, if 1 apply Hann taper to time series before FFT (default 0)
 %
-%             -> the number of frequnecy bands is 
-%             Nwin = floor((Nt − Nf)/HOP) + 1 with the band hop size HOP = Nf − ovlp      
+%             -> for real-valued data, only the nonnegative frequencies
+%                from zero through Nyquist are processed
+%             -> for complex-valued data, the two-sided spectrum is
+%                processed without allowing a band to cross zero
 %
 %   OUTPUTS
 %   GAINS : (Nwin x Nmodes) bSPOD gains per band 
@@ -85,14 +87,31 @@ else
 end
 Q_hat = (Q_hat.' / Nt);                              % (Ndof x Nt) forward normalization
 
-% -------------------------- frequency vector -------------------------------
-Fs = 1/dt;                                        % sampling freq 
-df = Fs/Nt;                                       % freq. resolution dft
-frequ = (0:Nt-1) * df;                            % dft frequencies
-frequ(frequ > Fs/2) = frequ(frequ > Fs/2) - Fs;   % shift to negative frequencies
+% -------------------------- frequency vector and bands ---------------------
+Fs = 1/dt;                                        % sampling frequency
+df = Fs/Nt;                                       % DFT frequency resolution
 
-% -------------------------- banding in frequency ---------------------------
-Nwin = floor((Nt - Nf)/HOP) + 1;
+if isreal(data)
+    % One-sided spectrum: zero through Nyquist (for even Nt).
+    Npositive = floor(Nt/2) + 1;
+    Q_hat = Q_hat(:,1:Npositive);
+    frequ = (0:Npositive-1) * df;
+
+    band_starts = 1:HOP:(Npositive-Nf+1);
+else
+    % Order the complete spectrum from negative to positive frequency.
+    Q_hat = fftshift(Q_hat,2);
+    frequ = (-floor(Nt/2):ceil(Nt/2)-1) * df;
+
+    % Build the negative- and nonnegative-frequency bands separately so no
+    % band can contain frequencies from both sides of zero.
+    first_nonnegative = find(frequ >= 0,1,'first');
+    negative_starts = 1:HOP:(first_nonnegative-Nf);
+    nonnegative_starts = first_nonnegative:HOP:(Nt-Nf+1);
+    band_starts = [negative_starts, nonnegative_starts];
+end
+
+Nwin = numel(band_starts);
 
 % -------------------------- preallocation ----------------------------------
 GAINS = zeros(Nwin, Nmodes);
@@ -110,7 +129,7 @@ alpha = (Nt*dt) / (Nf*Uw);
 
 % -------------------------- main loop --------------------------------------
 for j = 1:Nwin
-    idx0 = (j-1)*HOP + 1;
+    idx0 = band_starts(j);
     idx1 = idx0 + Nf - 1;
 
     f_window = frequ(idx0:idx1);              % (1 x Nf) or (Nf x 1)
@@ -135,11 +154,13 @@ for j = 1:Nwin
     MODES(j,:,:) = U;
     GAINS(j,:)   = lambda(:);
 
-    % keep original "real-signal one-sided doubling" behavior:
+    % Convert real-valued data to the conventional one-sided gain.
     if isreal(data)
-        if j ~= 1 && j ~= Nwin
-            GAINS(j,:) = 2 * GAINS(j,:);
-        end
+        % Each Nf block contains almost entirely positive-frequency bins
+        % whose omitted negative-frequency partners carry equal energy.
+        % The input is expected to be mean-subtracted, so the single DC
+        % contribution is negligible; therefore every block is doubled.
+        GAINS(j,:) = 2 * GAINS(j,:);
     end
 
     % Optional output: expansion eigenvectors
